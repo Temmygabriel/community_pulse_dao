@@ -3,11 +3,15 @@
 // Session 5
 // Two contexts: "community" (waiting for create tx) and "proposal" (waiting for AI eval)
 
+import { useState } from "react";
+
 interface JudgingProps {
   context: "community" | "proposal";
   communityName: string;
   proposalId: string;
   proposalTitle: string;
+  onGoHome: () => void;
+  onViewProposals: () => void;
 }
 
 export default function JudgingScreen({
@@ -15,10 +19,52 @@ export default function JudgingScreen({
   communityName,
   proposalId,
   proposalTitle,
+  onGoHome,
+  onViewProposals,
 }: JudgingProps) {
+  const [copied, setCopied] = useState(false);
+
   function copyProposalId() {
-    if (proposalId) navigator.clipboard.writeText(proposalId);
+    if (!proposalId) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(proposalId).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(() => fallbackCopy(proposalId));
+    } else {
+      fallbackCopy(proposalId);
+    }
   }
+
+  function fallbackCopy(text: string) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      document.execCommand("copy");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+    document.body.removeChild(textarea);
+  }
+
+  // ── Shared escape buttons ──
+  const escapeButtons = (
+    <div style={{ display: "flex", gap: "10px", width: "100%", maxWidth: "400px" }}>
+      <button className="btn-outline" onClick={onGoHome} style={{ flex: 1 }}>
+        ← Home
+      </button>
+      {context === "proposal" && (
+        <button className="btn-secondary" onClick={onViewProposals} style={{ flex: 1 }}>
+          View Proposals →
+        </button>
+      )}
+    </div>
+  );
 
   if (context === "community") {
     return (
@@ -73,6 +119,8 @@ export default function JudgingScreen({
               </div>
             ))}
           </div>
+
+          {escapeButtons}
 
         </div>
       </div>
@@ -140,20 +188,21 @@ export default function JudgingScreen({
               onClick={copyProposalId}
               style={{
                 fontSize: "12px",
-                color: "#00D4FF",
-                border: "1px solid rgba(0,212,255,0.2)",
+                color: copied ? "#00FF87" : "#00D4FF",
+                border: `1px solid ${copied ? "rgba(0,255,135,0.4)" : "rgba(0,212,255,0.2)"}`,
                 borderRadius: "8px",
                 padding: "4px 12px",
-                background: "none",
+                background: copied ? "rgba(0,255,135,0.08)" : "none",
                 cursor: "pointer",
                 fontFamily: "Inter, sans-serif",
                 margin: "0 auto",
+                transition: "all 0.2s",
               }}
             >
-              Copy ID
+              {copied ? "✓ Copied!" : "Copy ID"}
             </button>
             <div style={{ fontSize: "13px", color: "#888899", lineHeight: 1.6 }}>
-              Can't wait? Close this tab and find your proposal in the Proposal Feed once scoring is complete.
+              Can't wait? Use the buttons below to go home or view proposals once scoring is complete.
             </div>
           </div>
         )}
@@ -177,12 +226,12 @@ export default function JudgingScreen({
             What the AI scores
           </div>
           {[
-            ["🎯", "Purpose alignment",    "Does it match the community's stated mission?"],
-            ["👥", "Community benefit",    "Does it help the majority of members?"],
-            ["📜", "Constitutional fit",   "Does it respect the always/never fund rules?"],
-            ["🔧", "Feasibility",          "Is the timeline and metric realistic?"],
-            ["💸", "Value for money",      "Is the amount reasonable for the outcome?"],
-            ["❤️",  "Pulse bonus",          "Up to +5 pts from community support"],
+            ["🎯", "Purpose alignment",  "Does it match the community's stated mission?"],
+            ["👥", "Community benefit",  "Does it help the majority of members?"],
+            ["📜", "Constitutional fit", "Does it respect the always/never fund rules?"],
+            ["🔧", "Feasibility",        "Is the timeline and metric realistic?"],
+            ["💸", "Value for money",    "Is the amount reasonable for the outcome?"],
+            ["❤️",  "Pulse bonus",        "Up to +5 pts from community support"],
           ].map(([icon, label, desc]) => (
             <div key={String(label)} style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
               <span style={{ fontSize: "15px", flexShrink: 0 }}>{icon}</span>
@@ -193,6 +242,8 @@ export default function JudgingScreen({
             </div>
           ))}
         </div>
+
+        {escapeButtons}
 
       </div>
     </div>

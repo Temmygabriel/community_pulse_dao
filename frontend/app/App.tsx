@@ -584,6 +584,12 @@ export default function App() {
             communityName={community?.name ?? ""}
             proposalId={activeProposalId}
             proposalTitle={proposal?.title ?? ""}
+            onGoHome={handleNavigateToLanding}
+            onViewProposals={() => {
+              stopPolling();
+              calculatingRef.current = false;
+              setScreen("proposal_feed");
+            }}
           />
         );
 
