@@ -75,7 +75,7 @@ export default function ConstitutionScreen({ community, onBack }: ConstitutionPr
           const text = community.constitution[key as keyof typeof community.constitution];
           return (
             <div key={key} className="constitution-card">
-              <div style={{ display: "flex", align-items: "center", gap: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <span style={{ fontSize: "1.2rem" }}>{icon}</span>
                 <div className="constitution-card-tag">{tag}</div>
               </div>

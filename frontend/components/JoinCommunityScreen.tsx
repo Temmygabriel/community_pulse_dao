@@ -140,7 +140,7 @@ export default function JoinCommunityScreen({
               ["✅", foundCommunity.funded_count, "funded"],
               ["🎯", `${foundCommunity.funding_threshold}/100`, "threshold"],
             ].map(([icon, val, lbl]) => (
-              <div key={String(lbl)} style={{ display: "flex", flex-direction: "column", gap: "2px" }}>
+              <div key={String(lbl)} style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
                 <div style={{ fontSize: "13px", color: "#F0F0F0", fontWeight: 600 }}>
                   {icon} {val}
                 </div>
