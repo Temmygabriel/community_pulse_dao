@@ -1,10 +1,10 @@
 {
   "name": "community-pulse",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build --no-lint",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
@@ -13,7 +13,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "genlayer-js": "0.23.0",
-    "framer-motion": "^11.0.0"
+    "framer-motion": "^11.0.0",
+    "viem": "^2.0.0"
   },
   "devDependencies": {
     "@types/node": "^20",
@@ -21,6 +22,9 @@
     "@types/react-dom": "^19",
     "typescript": "^5",
     "eslint": "^8",
-    "eslint-config-next": "15.2.6"
+    "eslint-config-next": "15.2.6",
+    "tailwindcss": "^3.4.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0"
   }
 }

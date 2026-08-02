@@ -5,11 +5,9 @@ const nextConfig = {
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals = config.externals || [];
-      config.externals.push(
-        "genlayer-js", "genlayer-js/chains", "genlayer-js/types"
-      );
+      config.externals.push("genlayer-js", "genlayer-js/chains", "genlayer-js/types");
     }
     return config;
   },
-}
-module.exports = nextConfig
+};
+module.exports = nextConfig;
