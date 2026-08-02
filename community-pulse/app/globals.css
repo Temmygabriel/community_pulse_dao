@@ -6,18 +6,11 @@
   :root {
     --font-inter: "Inter", system-ui, sans-serif;
   }
-
-  * {
-    box-sizing: border-box;
-  }
-
+  * { box-sizing: border-box; }
   html {
     font-family: var(--font-inter);
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
   }
-
-  /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(45,106,79,0.25); border-radius: 3px; }
@@ -25,81 +18,143 @@
 }
 
 @layer components {
-  /* Cards */
+
+  /* ── Cards ── */
   .cp-card {
-    @apply bg-white dark:bg-white/4 border border-black/8 dark:border-white/8 rounded-xl p-4;
+    background: white;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 12px;
+    padding: 1rem;
   }
-  .cp-card-green {
-    @apply bg-mint/30 dark:bg-forest/10 border border-forest/20 rounded-xl p-4;
-  }
-  .cp-card-amber {
-    @apply bg-amber/10 border border-amber/30 rounded-xl p-4;
-  }
-  .cp-card-red {
-    @apply bg-coral/5 border border-coral/20 rounded-xl p-4;
+  .dark .cp-card {
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.08);
   }
 
-  /* Buttons */
+  .cp-card-green {
+    background: rgba(216,243,220,0.4);
+    border: 1px solid rgba(45,106,79,0.2);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+  .dark .cp-card-green {
+    background: rgba(45,106,79,0.1);
+    border-color: rgba(45,106,79,0.3);
+  }
+
+  .cp-card-amber {
+    background: rgba(244,162,97,0.08);
+    border: 1px solid rgba(244,162,97,0.3);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+
+  .cp-card-red {
+    background: rgba(230,57,70,0.05);
+    border: 1px solid rgba(230,57,70,0.2);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+
+  /* ── Buttons ── */
   .cp-btn-primary {
     @apply w-full py-3 px-6 rounded-xl bg-forest text-white font-medium text-sm
-           hover:bg-moss active:scale-[0.98] transition-all disabled:opacity-40
-           disabled:cursor-not-allowed disabled:active:scale-100;
-  }
-  .cp-btn-secondary {
-    @apply w-full py-3 px-6 rounded-xl border border-forest/30 text-forest font-medium text-sm
-           hover:bg-mint/30 active:scale-[0.98] transition-all disabled:opacity-40
-           disabled:cursor-not-allowed bg-transparent;
-  }
-  .cp-btn-ghost {
-    @apply py-2 px-4 rounded-lg text-stone dark:text-fog text-sm
-           hover:bg-black/4 dark:hover:bg-white/6 active:scale-[0.98] transition-all;
-  }
-  .cp-btn-danger {
-    @apply w-full py-3 px-6 rounded-xl bg-coral text-white font-medium text-sm
-           hover:opacity-90 active:scale-[0.98] transition-all;
+           hover:bg-moss active:scale-95 transition-all
+           disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100;
   }
 
-  /* Form inputs */
-  .cp-input {
-    @apply w-full px-4 py-3 rounded-xl border border-black/10 dark:border-white/10
-           bg-white dark:bg-white/4 text-ink dark:text-cream text-sm
-           placeholder:text-stone/50 dark:placeholder:text-fog/50
-           focus:outline-none focus:ring-2 focus:ring-forest/30 focus:border-forest/50
-           transition-all;
+  .cp-btn-secondary {
+    @apply w-full py-3 px-6 rounded-xl text-forest font-medium text-sm
+           hover:bg-mint active:scale-95 transition-all bg-transparent
+           disabled:opacity-40 disabled:cursor-not-allowed;
+    border: 1px solid rgba(45,106,79,0.3);
   }
+
+  .cp-btn-ghost {
+    @apply py-2 px-4 rounded-lg text-sm transition-all;
+    color: #5F6B5A;
+  }
+  .cp-btn-ghost:hover {
+    background: rgba(0,0,0,0.04);
+  }
+  .dark .cp-btn-ghost { color: #8A9985; }
+  .dark .cp-btn-ghost:hover { background: rgba(255,255,255,0.06); }
+
+  /* ── Inputs ── */
+  .cp-input {
+    @apply w-full px-4 py-3 rounded-xl text-sm transition-all;
+    background: white;
+    border: 1px solid rgba(0,0,0,0.1);
+    color: #1A1A18;
+    outline: none;
+  }
+  .cp-input::placeholder { color: rgba(95,107,90,0.5); }
+  .cp-input:focus {
+    border-color: rgba(45,106,79,0.5);
+    box-shadow: 0 0 0 3px rgba(45,106,79,0.12);
+  }
+  .dark .cp-input {
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.1);
+    color: #FAFAF8;
+  }
+  .dark .cp-input::placeholder { color: rgba(138,153,133,0.5); }
+
   .cp-textarea {
     @apply cp-input resize-none;
   }
-  .cp-label {
-    @apply block text-xs font-medium text-stone dark:text-fog uppercase tracking-wider mb-2;
-  }
 
-  /* Status badges */
+  .cp-label {
+    @apply block text-xs font-medium uppercase tracking-wider mb-2;
+    color: #5F6B5A;
+  }
+  .dark .cp-label { color: #8A9985; }
+
+  /* ── Badge ── */
   .cp-badge {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
 
-  /* Score bar */
+  /* ── Score bar ── */
   .cp-score-track {
-    @apply h-1.5 rounded-full bg-black/8 dark:bg-white/8 overflow-hidden flex-1;
+    height: 6px;
+    border-radius: 9999px;
+    background: rgba(0,0,0,0.08);
+    overflow: hidden;
+    flex: 1;
   }
+  .dark .cp-score-track { background: rgba(255,255,255,0.08); }
+
   .cp-score-fill {
-    @apply h-full rounded-full transition-all duration-500;
+    height: 100%;
+    border-radius: 9999px;
+    transition: width 0.5s ease;
   }
 
-  /* Section label */
+  /* ── Section label ── */
   .cp-section-label {
-    @apply text-xs font-medium text-stone dark:text-fog uppercase tracking-wider;
+    @apply text-xs font-medium uppercase tracking-wider;
+    color: #5F6B5A;
   }
+  .dark .cp-section-label { color: #8A9985; }
 
-  /* Loading dots animation */
+  /* ── Loading dots ── */
   .cp-dots span {
-    @apply inline-block w-1.5 h-1.5 rounded-full bg-sage mx-0.5 animate-bounce;
+    @apply inline-block rounded-full mx-0.5;
+    width: 6px;
+    height: 6px;
+    background: #74C69D;
+    animation: cpBounce 0.9s ease-in-out infinite;
   }
   .cp-dots span:nth-child(2) { animation-delay: 0.15s; }
   .cp-dots span:nth-child(3) { animation-delay: 0.3s; }
 
-  /* Fade in */
+  @keyframes cpBounce {
+    0%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-6px); }
+  }
+
+  /* ── Fade in ── */
   .cp-fade {
     animation: cpFade 0.25s ease both;
   }
