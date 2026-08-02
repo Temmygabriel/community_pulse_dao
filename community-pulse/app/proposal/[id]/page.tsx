@@ -12,8 +12,8 @@ import {
   statusLabel, statusColor, statusBg, EVIDENCE_TYPES
 } from "@/lib/utils";
 import type { Proposal, Community, EvidenceType } from "@/lib/types";
-import { useWallet } from "../../components/wallet/WalletProvider";
-import { Spinner, StatusBadge, ErrorMessage, BackButton, ScoreBar, LoadingDots } from "../../components/ui/index";
+import { useWallet } from "@/app/components/wallet/WalletProvider";
+import { Spinner, StatusBadge, ErrorMessage, BackButton, ScoreBar, LoadingDots } from "@/app/components/ui/index";
 
 const PRINCIPLE_LABELS: Record<string, string> = {
   purpose_alignment:  "Purpose alignment",

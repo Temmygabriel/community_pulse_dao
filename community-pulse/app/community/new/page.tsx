@@ -3,8 +3,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createCommunity } from "@/lib/contract";
 import { toRawUnits } from "@/lib/utils";
-import { useWallet } from "../../components/wallet/WalletProvider";
-import { Spinner, ErrorMessage, BackButton } from "../../components/ui/index";
+import { useWallet } from "@/app/components/wallet/WalletProvider";
+import { Spinner, ErrorMessage, BackButton } from "@/app/components/ui/index";
 
 type Step = 1 | 2 | 3;
 

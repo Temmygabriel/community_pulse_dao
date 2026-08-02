@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { useWallet } from "./WalletProvider";
+import { useWallet } from "@/app/components/wallet/WalletProvider";
 import { truncateAddress } from "@/lib/utils";
 
 export function WalletButton() {

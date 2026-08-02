@@ -4,8 +4,8 @@ import { useParams, useRouter } from "next/navigation";
 import { getCommunity, submitProposal, evaluateProposal } from "@/lib/contract";
 import { fromRawUnits, toRawUnits, formatGEN, formatGENShort } from "@/lib/utils";
 import type { Community } from "@/lib/types";
-import { useWallet } from "../../../components/wallet/WalletProvider";
-import { Spinner, ErrorMessage, BackButton } from "../../../components/ui/index";
+import { useWallet } from "@/app/components/wallet/WalletProvider";
+import { Spinner, ErrorMessage, BackButton } from "@/app/components/ui/index";
 
 export default function ProposePage() {
   const params = useParams();
