@@ -1,79 +1,111 @@
 "use client";
 import { useState } from "react";
-import { useWallet } from "@/app/components/wallet/WalletProvider";
-import { truncateAddress } from "@/lib/utils";
+import { useWallet } from "./WalletProvider";
+
+function truncate(address: string): string {
+  if (!address || address.length < 10) return address;
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
 
 export function WalletButton() {
-  const { wallet, connectMetaMask, connectBurner } = useWallet();
+  const { wallet, connectBurner } = useWallet();
   const [open, setOpen] = useState(false);
+  const [keyCopied, setKeyCopied] = useState(false);
+  const [addrCopied, setAddrCopied] = useState(false);
+  const [showKey, setShowKey] = useState(false);
 
   if (!wallet.connected) {
     return (
       <button
         onClick={connectBurner}
-        className="text-sm px-3 py-1.5 rounded-full border border-forest/30 text-forest bg-mint/30 hover:bg-mint/50 transition-colors"
+        style={{ fontSize: 13, padding: "6px 14px", borderRadius: 999, border: "1px solid rgba(45,106,79,0.3)", color: "#2D6A4F", background: "rgba(216,243,220,0.4)", cursor: "pointer", fontFamily: "inherit" }}
       >
         Connect
       </button>
     );
   }
 
+  function copyAddress() {
+    navigator.clipboard.writeText(wallet.address);
+    setAddrCopied(true);
+    setTimeout(() => setAddrCopied(false), 2000);
+  }
+
+  function copyKey() {
+    const key = localStorage.getItem("cp_burner_key") || "";
+    navigator.clipboard.writeText(key);
+    setKeyCopied(true);
+    setTimeout(() => setKeyCopied(false), 2000);
+  }
+
+  const savedKey = typeof window !== "undefined" ? localStorage.getItem("cp_burner_key") || "" : "";
+
   return (
-    <div className="relative">
+    <div style={{ position: "relative" }}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-full border border-forest/30 bg-mint/20 hover:bg-mint/40 transition-colors"
+        style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "6px 14px", borderRadius: 999, border: "1px solid rgba(45,106,79,0.3)", background: "rgba(216,243,220,0.3)", cursor: "pointer", fontFamily: "inherit" }}
       >
-        <span className="w-2 h-2 rounded-full bg-sage" />
-        <span className="text-forest font-medium hidden sm:block">
-          {wallet.type === "metamask" ? "MetaMask" : "Burner"}
-        </span>
-        <span className="text-stone font-mono text-xs">
-          {truncateAddress(wallet.address, 4)}
-        </span>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#74C69D", flexShrink: 0 }} />
+        <span style={{ color: "#2D6A4F", fontWeight: 500 }}>Burner</span>
+        <span style={{ fontFamily: "monospace", color: "#5F6B5A", fontSize: 12 }}>{truncate(wallet.address)}</span>
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-ink rounded-xl border border-black/8 dark:border-white/10 shadow-lg z-50 overflow-hidden">
-          <div className="p-3 border-b border-black/6 dark:border-white/8">
-            <div className="text-xs text-stone dark:text-fog mb-1">
-              {wallet.type === "metamask" ? "MetaMask wallet" : "Burner wallet"}
+        <>
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 40 }}
+            onClick={() => { setOpen(false); setShowKey(false); }}
+          />
+          <div style={{
+            position: "absolute", right: 0, top: "calc(100% + 8px)",
+            width: 300, background: "white", border: "1px solid rgba(0,0,0,0.1)",
+            borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+            zIndex: 50, overflow: "hidden"
+          }}>
+            {/* Address section */}
+            <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+              <div style={{ fontSize: 11, color: "#8A9985", marginBottom: 4 }}>Burner wallet address</div>
+              <div style={{ fontFamily: "monospace", fontSize: 11, color: "#1A1A18", wordBreak: "break-all", marginBottom: 8 }}>
+                {wallet.address}
+              </div>
+              <button onClick={copyAddress} style={{ fontSize: 12, color: addrCopied ? "#2D6A4F" : "#5F6B5A", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 8, padding: "4px 10px", background: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                {addrCopied ? "✓ Copied!" : "Copy address"}
+              </button>
             </div>
-            <div className="font-mono text-xs text-ink dark:text-cream break-all">
-              {wallet.address}
+
+            {/* Private key warning */}
+            <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", background: "rgba(244,162,97,0.06)" }}>
+              <div style={{ fontSize: 12, fontWeight: 500, color: "#F4A261", marginBottom: 6 }}>
+                ⚠️ Save your private key
+              </div>
+              <div style={{ fontSize: 12, color: "#5F6B5A", lineHeight: 1.5, marginBottom: 10 }}>
+                This key is stored in your browser. If you clear your browser data or use a different device, you will lose access to your communities and proposals. Save it now.
+              </div>
+              {!showKey ? (
+                <button onClick={() => setShowKey(true)} style={{ fontSize: 12, color: "#F4A261", border: "1px solid rgba(244,162,97,0.4)", borderRadius: 8, padding: "4px 10px", background: "rgba(244,162,97,0.06)", cursor: "pointer", fontFamily: "inherit" }}>
+                  Show private key
+                </button>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ fontFamily: "monospace", fontSize: 10, color: "#1A1A18", wordBreak: "break-all", background: "rgba(0,0,0,0.03)", padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.08)" }}>
+                    {savedKey}
+                  </div>
+                  <button onClick={copyKey} style={{ fontSize: 12, color: keyCopied ? "#2D6A4F" : "#F4A261", border: `1px solid ${keyCopied ? "rgba(45,106,79,0.4)" : "rgba(244,162,97,0.4)"}`, borderRadius: 8, padding: "4px 10px", background: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                    {keyCopied ? "✓ Key copied!" : "Copy private key"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* How to restore */}
+            <div style={{ padding: "12px 16px" }}>
+              <div style={{ fontSize: 11, color: "#8A9985", lineHeight: 1.5 }}>
+                To restore on another browser: open the wallet menu on that browser and paste your private key. Your communities and proposals are tied to your address.
+              </div>
             </div>
           </div>
-          <div className="p-2 flex flex-col gap-1">
-            {wallet.type === "burner" && (
-              <button
-                onClick={() => { connectMetaMask(); setOpen(false); }}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm text-forest hover:bg-mint/20 transition-colors font-medium"
-              >
-                Connect MetaMask instead →
-              </button>
-            )}
-            {wallet.type === "metamask" && (
-              <button
-                onClick={() => { connectBurner(); setOpen(false); }}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm text-stone dark:text-fog hover:bg-black/4 dark:hover:bg-white/6 transition-colors"
-              >
-                Switch to burner key
-              </button>
-            )}
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(wallet.address);
-                setOpen(false);
-              }}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm text-stone dark:text-fog hover:bg-black/4 dark:hover:bg-white/6 transition-colors"
-            >
-              Copy address
-            </button>
-          </div>
-        </div>
-      )}
-      {open && (
-        <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+        </>
       )}
     </div>
   );
