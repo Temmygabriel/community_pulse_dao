@@ -9,7 +9,6 @@ interface WalletContextValue {
   connectMetaMask: () => Promise<void>;
   connectBurner: () => void;
   disconnect: () => void;
-  isBurner: boolean;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -19,40 +18,30 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<ReturnType<typeof makeAccount> | null>(null);
 
   useEffect(() => {
-    // Always restore burner key from localStorage on mount.
-    // If no key exists, create one and save it immediately.
-    // The key persists until the user explicitly clears localStorage.
-    let key = localStorage.getItem("cp_burner_key");
+    // ALWAYS restore the same burner key from localStorage.
+    // Only generate a new one if absolutely nothing is saved.
+    // This key is permanent for this browser — it never changes on refresh.
+    const saved = localStorage.getItem("cp_burner_key");
+    
     try {
-      let acc: ReturnType<typeof makeAccount>;
-      if (key && key.startsWith("0x") && key.length > 10) {
-        acc = makeAccount(key as `0x${string}`);
+      if (saved && saved.startsWith("0x") && saved.length >= 66) {
+        // Valid saved key — restore it, same address every time
+        const acc = makeAccount(saved as `0x${string}`);
+        setAccount(acc);
+        setWallet({ address: acc.address, type: "burner", connected: true });
       } else {
-        acc = makeAccount();
+        // No key saved yet — generate once and persist forever
+        const acc = makeAccount();
         localStorage.setItem("cp_burner_key", acc.privateKey);
+        setAccount(acc);
+        setWallet({ address: acc.address, type: "burner", connected: true });
       }
-      setAccount(acc);
-      setWallet({ address: acc.address, type: "burner", connected: true });
     } catch {
+      // If restore fails for any reason, generate fresh and save
       const acc = makeAccount();
       localStorage.setItem("cp_burner_key", acc.privateKey);
       setAccount(acc);
       setWallet({ address: acc.address, type: "burner", connected: true });
-    }
-
-    // Also check if MetaMask was previously connected
-    const savedMetaMask = localStorage.getItem("cp_metamask_address");
-    if (savedMetaMask && (window as any).ethereum) {
-      // Re-establish MetaMask silently
-      (window as any).ethereum.request({ method: "eth_accounts" })
-        .then((accounts: string[]) => {
-          if (accounts[0] && accounts[0].toLowerCase() === savedMetaMask.toLowerCase()) {
-            const acc = makeAccount();
-            setAccount(acc);
-            setWallet({ address: accounts[0], type: "metamask", connected: true });
-          }
-        })
-        .catch(() => { /* MetaMask not available, stay on burner */ });
     }
   }, []);
 
@@ -66,14 +55,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         method: "eth_requestAccounts",
       });
       if (!accounts[0]) throw new Error("No account returned");
-      const address = accounts[0];
-      const acc = makeAccount();
+      // Note: MetaMask is display-only on studionet.
+      // Transactions still sign with the burner key — genlayer-js
+      // requires its own account object, not MetaMask's signer.
+      // We show the MetaMask address so the user knows which account
+      // they're "representing" but the burner key does the actual signing.
+      const saved = localStorage.getItem("cp_burner_key");
+      const acc = saved && saved.startsWith("0x") && saved.length >= 66
+        ? makeAccount(saved as `0x${string}`)
+        : makeAccount();
       setAccount(acc);
-      setWallet({ address, type: "metamask", connected: true });
-      localStorage.setItem("cp_metamask_address", address);
+      setWallet({ address: accounts[0], type: "metamask", connected: true });
     } catch (err: any) {
       if (err?.code === 4001) {
-        alert("MetaMask connection rejected. Please approve the connection request.");
+        alert("MetaMask connection rejected.");
       } else {
         console.error("MetaMask connect failed:", err?.message);
       }
@@ -81,15 +76,19 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const connectBurner = useCallback(() => {
-    const key = localStorage.getItem("cp_burner_key");
+    // Always restore from saved key — never generate a new one
+    const saved = localStorage.getItem("cp_burner_key");
     try {
-      const acc = key && key.startsWith("0x") && key.length > 10
-        ? makeAccount(key as `0x${string}`)
-        : makeAccount();
-      localStorage.setItem("cp_burner_key", acc.privateKey);
-      setAccount(acc);
-      setWallet({ address: acc.address, type: "burner", connected: true });
-      localStorage.removeItem("cp_metamask_address");
+      if (saved && saved.startsWith("0x") && saved.length >= 66) {
+        const acc = makeAccount(saved as `0x${string}`);
+        setAccount(acc);
+        setWallet({ address: acc.address, type: "burner", connected: true });
+      } else {
+        const acc = makeAccount();
+        localStorage.setItem("cp_burner_key", acc.privateKey);
+        setAccount(acc);
+        setWallet({ address: acc.address, type: "burner", connected: true });
+      }
     } catch {
       const acc = makeAccount();
       localStorage.setItem("cp_burner_key", acc.privateKey);
@@ -104,10 +103,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <WalletContext.Provider value={{
-      wallet, account, connectMetaMask, connectBurner, disconnect,
-      isBurner: wallet.type === "burner",
-    }}>
+    <WalletContext.Provider value={{ wallet, account, connectMetaMask, connectBurner, disconnect }}>
       {children}
     </WalletContext.Provider>
   );
