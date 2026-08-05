@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useWallet } from "./WalletProvider";
 
-const STORAGE_KEY = "cp_burner_key_v2";
+const KEY_NAME = "cp_burner_key";
 
 function truncate(address: string): string {
   if (!address || address.length < 10) return address;
@@ -17,6 +17,7 @@ export function WalletButton() {
   const [keyCopied, setKeyCopied] = useState(false);
   const [addrCopied, setAddrCopied] = useState(false);
 
+  // Don't render until wallet is connected (after useEffect fires on client)
   if (!wallet.connected || !wallet.address) return null;
 
   function handleOpen() {
@@ -24,6 +25,7 @@ export function WalletButton() {
     setShowKey(false);
     setPrivateKey("");
     setKeyCopied(false);
+    setAddrCopied(false);
   }
 
   function copyAddress() {
@@ -33,14 +35,14 @@ export function WalletButton() {
   }
 
   function handleShowKey() {
-    // Read from localStorage only on click — safe, client only
-    const key = localStorage.getItem(STORAGE_KEY) || "";
-    setPrivateKey(key || "No key found — try refreshing.");
+    // Read from localStorage only on click — safe, always client-side
+    const key = localStorage.getItem(KEY_NAME) || "";
+    setPrivateKey(key || "No key found.");
     setShowKey(true);
   }
 
   function copyKey() {
-    const key = localStorage.getItem(STORAGE_KEY) || "";
+    const key = localStorage.getItem(KEY_NAME) || "";
     if (!key) return;
     navigator.clipboard.writeText(key);
     setKeyCopied(true);
@@ -190,7 +192,7 @@ export function WalletButton() {
               )}
               <div style={{ fontSize: 11, color: "#8A9985", marginTop: 8, lineHeight: 1.4 }}>
                 {wallet.type === "burner"
-                  ? "MetaMask is display only on studionet — transactions still sign with your burner key."
+                  ? "MetaMask is display only on studionet — all transactions sign with your burner key."
                   : "Switch back to use your saved burner key for signing."}
               </div>
             </div>
