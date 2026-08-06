@@ -1,12 +1,22 @@
 "use client";
-import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
-import { makeAccount } from "@/lib/contract";
+import {
+  createContext, useContext, useState,
+  useEffect, useCallback, useRef, ReactNode
+} from "react";
 
 // ----------------------------------------------------------------
-// Pattern copied directly from Hot Take Protocol which solved this:
-// - account stored in useRef (persists, no re-renders)
-// - localStorage read inside useEffect with [] deps (runs once, client only)
-// - synchronous makeAccount call, no async, no race condition
+// KEY INSIGHT: Next.js App Router layout.tsx is a server component.
+// Any provider rendered inside it gets server-rendered first, then
+// hydrated on the client. During SSR, localStorage does not exist.
+// During hydration, React reconciles server HTML with client state.
+// If client state differs from server state, React re-renders —
+// which is why a new key was being generated every refresh.
+//
+// THE FIX: Use a ref to store the account (like Hot Take Protocol),
+// but critically — initialize state to null/empty and ONLY populate
+// it inside useEffect. This means server renders nothing for wallet,
+// client renders the real wallet. No mismatch, no re-render loop.
+// suppressHydrationWarning on body handles the flash.
 // ----------------------------------------------------------------
 
 interface WalletState {
@@ -15,42 +25,55 @@ interface WalletState {
   connected: boolean;
 }
 
+// Lazy import to prevent ANY genlayer-js code running on server
+type AccountType = { address: string; privateKey: string };
+
 interface WalletContextValue {
   wallet: WalletState;
-  accountRef: React.MutableRefObject<ReturnType<typeof makeAccount> | null>;
-  account: ReturnType<typeof makeAccount> | null;
+  account: AccountType | null;
   connectMetaMask: () => Promise<void>;
   connectBurner: () => void;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 
-const KEY_NAME = "cp_burner_key";
+const STORAGE_KEY = "cp_burner_key";
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [wallet, setWallet] = useState<WalletState>({ address: "", type: "burner", connected: false });
-  const accountRef = useRef<ReturnType<typeof makeAccount> | null>(null);
-  const [account, setAccount] = useState<ReturnType<typeof makeAccount> | null>(null);
+  // Start with null — server renders null, client populates in useEffect
+  const [wallet, setWallet] = useState<WalletState>({
+    address: "", type: "burner", connected: false
+  });
+  const accountRef = useRef<AccountType | null>(null);
+  const [account, setAccount] = useState<AccountType | null>(null);
+  const initialized = useRef(false);
 
   useEffect(() => {
-    // Runs ONCE on client mount — exact same pattern as Hot Take Protocol
-    // localStorage is guaranteed available here
-    const savedKey = localStorage.getItem(KEY_NAME);
+    // Guard against double-invocation in React 18 strict mode
+    if (initialized.current) return;
+    initialized.current = true;
 
-    let acc: ReturnType<typeof makeAccount>;
-    if (savedKey && savedKey.startsWith("0x") && savedKey.length >= 66) {
-      // Restore existing key — same address every time
-      acc = makeAccount(savedKey as `0x${string}`);
-    } else {
-      // First visit — generate once and save permanently
-      acc = makeAccount();
-      localStorage.setItem(KEY_NAME, acc.privateKey);
-    }
+    // localStorage is guaranteed here — we are on the client
+    const savedKey = localStorage.getItem(STORAGE_KEY);
 
-    accountRef.current = acc;
-    setAccount(acc);
-    setWallet({ address: acc.address, type: "burner", connected: true });
-  }, []); // Empty deps — runs exactly once
+    // Dynamically import genlayer-js only on client
+    import("@/lib/contract").then(({ makeAccount }) => {
+      let acc: AccountType;
+
+      if (savedKey && savedKey.startsWith("0x") && savedKey.length >= 66) {
+        // Restore existing key — SAME address every time
+        acc = makeAccount(savedKey as `0x${string}`);
+      } else {
+        // First visit — generate once, save permanently
+        acc = makeAccount();
+        localStorage.setItem(STORAGE_KEY, acc.privateKey);
+      }
+
+      accountRef.current = acc;
+      setAccount(acc);
+      setWallet({ address: acc.address, type: "burner", connected: true });
+    });
+  }, []); // Runs exactly once on client mount
 
   const connectMetaMask = useCallback(async () => {
     if (typeof window === "undefined" || !(window as any).ethereum) {
@@ -62,32 +85,31 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         method: "eth_requestAccounts",
       });
       if (!accounts[0]) throw new Error("No account returned");
-      // Keep same burner account for signing — MetaMask address is display only
-      // genlayer-js on studionet requires its own account object for signing
-      setWallet({ address: accounts[0], type: "metamask", connected: true });
+      // Burner key still does the actual signing on studionet
+      setWallet(prev => ({ ...prev, address: accounts[0], type: "metamask" }));
     } catch (err: any) {
-      if (err?.code === 4001) {
-        alert("MetaMask connection rejected.");
-      }
+      if (err?.code === 4001) alert("MetaMask connection rejected.");
     }
   }, []);
 
   const connectBurner = useCallback(() => {
-    const savedKey = localStorage.getItem(KEY_NAME);
-    let acc: ReturnType<typeof makeAccount>;
-    if (savedKey && savedKey.startsWith("0x") && savedKey.length >= 66) {
-      acc = makeAccount(savedKey as `0x${string}`);
-    } else {
-      acc = makeAccount();
-      localStorage.setItem(KEY_NAME, acc.privateKey);
-    }
-    accountRef.current = acc;
-    setAccount(acc);
-    setWallet({ address: acc.address, type: "burner", connected: true });
+    const savedKey = localStorage.getItem(STORAGE_KEY);
+    import("@/lib/contract").then(({ makeAccount }) => {
+      let acc: AccountType;
+      if (savedKey && savedKey.startsWith("0x") && savedKey.length >= 66) {
+        acc = makeAccount(savedKey as `0x${string}`);
+      } else {
+        acc = makeAccount();
+        localStorage.setItem(STORAGE_KEY, acc.privateKey);
+      }
+      accountRef.current = acc;
+      setAccount(acc);
+      setWallet({ address: acc.address, type: "burner", connected: true });
+    });
   }, []);
 
   return (
-    <WalletContext.Provider value={{ wallet, accountRef, account, connectMetaMask, connectBurner }}>
+    <WalletContext.Provider value={{ wallet, account, connectMetaMask, connectBurner }}>
       {children}
     </WalletContext.Provider>
   );
