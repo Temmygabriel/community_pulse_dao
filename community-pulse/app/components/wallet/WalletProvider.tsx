@@ -1,37 +1,88 @@
 "use client";
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
 
 const KEY = "cp_burner_key";
 
-interface WalletContextValue {
+interface WalletState {
   address: string;
-  getAccount: () => any;
+  type: "burner" | "metamask";
+  connected: boolean;
+}
+
+interface WalletContextValue {
+  wallet: WalletState;
+  account: any;
+  connectMetaMask: () => Promise<void>;
+  connectBurner: () => void;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [address, setAddress] = useState("");
+  const [wallet, setWallet] = useState<WalletState>({ address: "", type: "burner", connected: false });
+  const accountRef = useRef<any>(null);
+  const [account, setAccount] = useState<any>(null);
+  const initialized = useRef(false);
 
   useEffect(() => {
-    const check = () => {
-      if (typeof window === "undefined") return;
-      const acc = (window as any).__cp_account;
-      if (acc && acc.address) setAddress(acc.address);
+    if (initialized.current) return;
+    initialized.current = true;
+
+    const run = async () => {
+      // Dynamic import — never runs on server
+      const { makeAccount } = await import("@/lib/contract");
+      const saved = localStorage.getItem(KEY);
+
+      let acc: any;
+      if (saved && saved.startsWith("0x") && saved.length >= 66) {
+        acc = makeAccount(saved as `0x${string}`);
+      } else {
+        acc = makeAccount();
+        // NOW acc.privateKey is real because makeAccount() attaches it explicitly
+        localStorage.setItem(KEY, acc.privateKey);
+      }
+
+      accountRef.current = acc;
+      setAccount(acc);
+      setWallet({ address: acc.address, type: "burner", connected: true });
     };
-    check();
-    const interval = setInterval(check, 100);
-    setTimeout(() => clearInterval(interval), 5000);
-    return () => clearInterval(interval);
+
+    run();
   }, []);
 
-  function getAccount() {
-    if (typeof window === "undefined") return null;
-    return (window as any).__cp_account || null;
-  }
+  const connectMetaMask = useCallback(async () => {
+    if (typeof window === "undefined" || !(window as any).ethereum) {
+      alert("MetaMask not detected. Please install MetaMask and refresh.");
+      return;
+    }
+    try {
+      const accounts: string[] = await (window as any).ethereum.request({
+        method: "eth_requestAccounts",
+      });
+      if (!accounts[0]) throw new Error("No account returned");
+      setWallet(prev => ({ ...prev, address: accounts[0], type: "metamask" }));
+    } catch (err: any) {
+      if (err?.code === 4001) alert("MetaMask connection rejected.");
+    }
+  }, []);
+
+  const connectBurner = useCallback(async () => {
+    const { makeAccount } = await import("@/lib/contract");
+    const saved = localStorage.getItem(KEY);
+    let acc: any;
+    if (saved && saved.startsWith("0x") && saved.length >= 66) {
+      acc = makeAccount(saved as `0x${string}`);
+    } else {
+      acc = makeAccount();
+      localStorage.setItem(KEY, acc.privateKey);
+    }
+    accountRef.current = acc;
+    setAccount(acc);
+    setWallet({ address: acc.address, type: "burner", connected: true });
+  }, []);
 
   return (
-    <WalletContext.Provider value={{ address, getAccount }}>
+    <WalletContext.Provider value={{ wallet, account, connectMetaMask, connectBurner }}>
       {children}
     </WalletContext.Provider>
   );
@@ -40,12 +91,5 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 export function useWallet() {
   const ctx = useContext(WalletContext);
   if (!ctx) throw new Error("useWallet must be used inside WalletProvider");
-  return {
-    wallet: {
-      address: ctx.address,
-      type: "burner" as const,
-      connected: !!ctx.address,
-    },
-    account: ctx.getAccount(),
-  };
+  return ctx;
 }

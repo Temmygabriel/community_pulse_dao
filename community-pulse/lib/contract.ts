@@ -1,29 +1,41 @@
-// ----------------------------------------------------------------
-// CommunityPulse v2 — GenLayer contract interface
-// ----------------------------------------------------------------
-
 import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
+import { generatePrivateKey } from "viem/accounts";
 import type { Community, Proposal, EvidenceType } from "./types";
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
 const MAX_ATTEMPTS = 3;
 
-function makeClient(account: ReturnType<typeof createAccount>) {
+// ----------------------------------------------------------------
+// CRITICAL FIX — confirmed against viem source (viem@2.29.0):
+// createAccount() / privateKeyToAccount() NEVER exposes .privateKey
+// on the returned object. viem captures it in closures for signing
+// but intentionally omits it from the return value (security choice).
+//
+// So acc.privateKey was always undefined.
+// localStorage.setItem("key", undefined) saves the literal string "undefined".
+// On reload, "undefined" fails the startsWith("0x") check → new key generated.
+// This is why the address changed every refresh.
+//
+// Fix: generate the raw key ourselves via generatePrivateKey() from viem/accounts
+// (already a transitive dep — no new packages needed), then attach it explicitly
+// to the account object so it's actually readable afterward.
+// ----------------------------------------------------------------
+
+export function makeAccount(privateKey?: `0x${string}`) {
+  const key = privateKey || generatePrivateKey();
+  const account = createAccount(key) as any;
+  account.privateKey = key; // attach explicitly — viem never does this
+  return account as ReturnType<typeof createAccount> & { privateKey: `0x${string}` };
+}
+
+function makeClient(account: ReturnType<typeof makeAccount>) {
   return createClient({ chain: studionet, account });
 }
 
-export function makeAccount(privateKey?: `0x${string}`) {
-  return createAccount(privateKey);
-}
-
-// ----------------------------------------------------------------
-// Core helpers
-// ----------------------------------------------------------------
-
 async function writeContract(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   method: string,
   args: unknown[],
   valueRaw?: string
@@ -61,7 +73,7 @@ async function writeContract(
 }
 
 async function readContract(method: string, args: unknown[]): Promise<string> {
-  const account = createAccount();
+  const account = makeAccount();
   const client = makeClient(account);
   const result = await client.readContract({
     address: CONTRACT_ADDRESS,
@@ -72,36 +84,11 @@ async function readContract(method: string, args: unknown[]): Promise<string> {
 }
 
 // ----------------------------------------------------------------
-// ID derivation helpers
-// Read the counter before tx, compute the new ID after
-// This replaces simulateWriteContract which doesn't work with payable calls
-// ----------------------------------------------------------------
-
-async function getCommunityCount(): Promise<number> {
-  try {
-    const c = await readContract("get_recent_communities", [1]);
-    const parsed = JSON.parse(c);
-    if (parsed && parsed.length > 0) return parsed[0].created_at;
-    return 0;
-  } catch {
-    return 0;
-  }
-}
-
-function makeCommunityId(n: number): string {
-  return "COM" + String(n).padStart(6, "0");
-}
-
-function makeProposalId(n: number): string {
-  return "PRO" + String(n).padStart(6, "0");
-}
-
-// ----------------------------------------------------------------
 // Write methods
 // ----------------------------------------------------------------
 
 export async function createCommunity(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   params: {
     founderName: string;
     communityName: string;
@@ -118,35 +105,33 @@ export async function createCommunity(
     startingPotRaw: string;
   }
 ): Promise<string> {
-  // Get current count so we can compute the new ID
   const before = await getCommunityCount();
-
   await writeContract(
-    account,
-    "create_community",
+    account, "create_community",
     [
-      params.founderName,
-      params.communityName,
-      params.description,
-      params.constitutionPurpose,
-      params.constitutionAlwaysFund,
-      params.constitutionNeverFund,
-      params.constitutionWhoBenefits,
+      params.founderName, params.communityName, params.description,
+      params.constitutionPurpose, params.constitutionAlwaysFund,
+      params.constitutionNeverFund, params.constitutionWhoBenefits,
       params.constitutionSuccess,
-      String(params.fundingThreshold),
-      String(params.maxProposalPct),
-      params.proposalFeeRaw,
-      String(params.upfrontReleasePct),
+      String(params.fundingThreshold), String(params.maxProposalPct),
+      params.proposalFeeRaw, String(params.upfrontReleasePct),
     ],
     params.startingPotRaw
   );
+  return "COM" + String(before + 1).padStart(6, "0");
+}
 
-  // The new community ID is before + 1
-  return makeCommunityId(before + 1);
+async function getCommunityCount(): Promise<number> {
+  try {
+    const c = await readContract("get_recent_communities", [1]);
+    const parsed = JSON.parse(c);
+    if (parsed && parsed.length > 0) return parsed[0].created_at;
+    return 0;
+  } catch { return 0; }
 }
 
 export async function joinCommunity(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   communityId: string,
   memberName: string
 ): Promise<void> {
@@ -154,7 +139,7 @@ export async function joinCommunity(
 }
 
 export async function depositFunds(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   communityId: string,
   amountRaw: string
 ): Promise<void> {
@@ -162,7 +147,7 @@ export async function depositFunds(
 }
 
 export async function submitProposal(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   params: {
     communityId: string;
     proposerName: string;
@@ -175,64 +160,45 @@ export async function submitProposal(
     feeRaw: string;
   }
 ): Promise<string> {
-  // Read community to get current proposal count for ID derivation
-  let proposalsBefore = 0;
-  try {
-    const c = await getCommunity(params.communityId);
-    proposalsBefore = c.proposal_count || 0;
-  } catch { /* use 0 */ }
-
   await writeContract(
-    account,
-    "submit_proposal",
+    account, "submit_proposal",
     [
-      params.communityId,
-      params.proposerName,
-      params.title,
-      params.amountRaw,
-      params.whatItDoes,
-      params.whoItHelps,
-      params.successMetric,
-      params.timeline,
+      params.communityId, params.proposerName, params.title,
+      params.amountRaw, params.whatItDoes, params.whoItHelps,
+      params.successMetric, params.timeline,
     ],
     params.feeRaw
   );
-
-  // Read community again to get the actual new proposal count
   try {
-    const c = await getCommunity(params.communityId);
     const proposals = await getCommunityProposals(params.communityId);
-    if (proposals.length > 0) {
-      return proposals[proposals.length - 1].id;
-    }
+    if (proposals.length > 0) return proposals[proposals.length - 1].id;
   } catch { /* fall through */ }
-
-  return makeProposalId(proposalsBefore + 1);
+  return "";
 }
 
 export async function addPulse(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   proposalId: string
 ): Promise<void> {
   return writeContract(account, "add_pulse", [proposalId]);
 }
 
 export async function evaluateProposal(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   proposalId: string
 ): Promise<void> {
   return writeContract(account, "evaluate_proposal", [proposalId]);
 }
 
 export async function retryPayout(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   proposalId: string
 ): Promise<void> {
   return writeContract(account, "retry_payout", [proposalId]);
 }
 
 export async function submitCompletionEvidence(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   params: {
     proposalId: string;
     evidenceType: EvidenceType;
@@ -241,15 +207,13 @@ export async function submitCompletionEvidence(
   }
 ): Promise<void> {
   return writeContract(account, "submit_completion_evidence", [
-    params.proposalId,
-    params.evidenceType,
-    params.evidenceUrl,
-    params.evidenceDescription,
+    params.proposalId, params.evidenceType,
+    params.evidenceUrl, params.evidenceDescription,
   ]);
 }
 
 export async function reviseProposal(
-  account: ReturnType<typeof createAccount>,
+  account: ReturnType<typeof makeAccount>,
   params: {
     originalProposalId: string;
     title: string;
@@ -261,24 +225,15 @@ export async function reviseProposal(
   }
 ): Promise<string> {
   await writeContract(account, "revise_proposal", [
-    params.originalProposalId,
-    params.title,
-    params.amountRaw,
-    params.whatItDoes,
-    params.whoItHelps,
-    params.successMetric,
-    params.timeline,
+    params.originalProposalId, params.title, params.amountRaw,
+    params.whatItDoes, params.whoItHelps,
+    params.successMetric, params.timeline,
   ]);
-
-  // Get the original proposal's community and find the newest proposal
   try {
     const original = await getProposal(params.originalProposalId);
     const proposals = await getCommunityProposals(original.community_id);
-    if (proposals.length > 0) {
-      return proposals[proposals.length - 1].id;
-    }
+    if (proposals.length > 0) return proposals[proposals.length - 1].id;
   } catch { /* fall through */ }
-
   return "";
 }
 
