@@ -9,12 +9,12 @@ class CommunityPulse(gl.Contract):
 
     community_count: u256
     proposal_count: u256
-    communities: TreeMap[str, str]           # community_id -> JSON
-    proposals: TreeMap[str, str]             # proposal_id -> JSON
-    community_proposals: TreeMap[str, str]   # community_id -> [proposal_ids] JSON
-    member_proposals: TreeMap[str, str]      # address -> [proposal_ids] JSON
-    community_members: TreeMap[str, str]     # community_id -> [addresses] JSON
-    proposal_pulses: TreeMap[str, str]       # proposal_id -> [addresses] JSON
+    communities: TreeMap[str, str]
+    proposals: TreeMap[str, str]
+    community_proposals: TreeMap[str, str]
+    member_proposals: TreeMap[str, str]
+    community_members: TreeMap[str, str]
+    proposal_pulses: TreeMap[str, str]
 
     def __init__(self):
         self.community_count = u256(0)
@@ -26,13 +26,11 @@ class CommunityPulse(gl.Contract):
 
     def _make_community_id(self) -> str:
         self.community_count = u256(int(self.community_count) + 1)
-        n = int(self.community_count)
-        return "COM" + str(n).zfill(6)
+        return "COM" + str(int(self.community_count)).zfill(6)
 
     def _make_proposal_id(self) -> str:
         self.proposal_count = u256(int(self.proposal_count) + 1)
-        n = int(self.proposal_count)
-        return "PRO" + str(n).zfill(6)
+        return "PRO" + str(int(self.proposal_count)).zfill(6)
 
     def _read_community(self, community_id: str) -> dict:
         return json.loads(self.communities[community_id])
@@ -48,53 +46,119 @@ class CommunityPulse(gl.Contract):
 
     def _get_community_proposals(self, community_id: str) -> list:
         raw = self.community_proposals.get(community_id)
-        if raw is None:
-            return []
-        return json.loads(raw)
+        return [] if raw is None else json.loads(raw)
 
     def _set_community_proposals(self, community_id: str, ids: list) -> None:
         self.community_proposals[community_id] = json.dumps(ids)
 
     def _get_member_proposals(self, address: str) -> list:
         raw = self.member_proposals.get(address)
-        if raw is None:
-            return []
-        return json.loads(raw)
+        return [] if raw is None else json.loads(raw)
 
     def _set_member_proposals(self, address: str, ids: list) -> None:
         self.member_proposals[address] = json.dumps(ids)
 
     def _get_community_members(self, community_id: str) -> list:
         raw = self.community_members.get(community_id)
-        if raw is None:
-            return []
-        return json.loads(raw)
+        return [] if raw is None else json.loads(raw)
 
     def _set_community_members(self, community_id: str, members: list) -> None:
         self.community_members[community_id] = json.dumps(members)
 
     def _get_proposal_pulses(self, proposal_id: str) -> list:
         raw = self.proposal_pulses.get(proposal_id)
-        if raw is None:
-            return []
-        return json.loads(raw)
+        return [] if raw is None else json.loads(raw)
 
     def _set_proposal_pulses(self, proposal_id: str, addresses: list) -> None:
         self.proposal_pulses[proposal_id] = json.dumps(addresses)
 
     def _is_member(self, community_id: str, address: str) -> bool:
-        members = self._get_community_members(community_id)
-        return address in members
+        return address in self._get_community_members(community_id)
 
     def _sender(self) -> str:
-        # CONFIRMED pattern from build guide: use .as_hex, never str()
-        # str(gl.message.sender_address) produces a different format and
-        # is explicitly listed as wrong in the confirmed API table.
         return gl.message.sender_address.as_hex
 
     def _pay(self, to_address: str, amount: int) -> None:
         target = gl.get_contract_at(Address(to_address))
         target.emit_transfer(value=amount)
+
+    def _validate_score_fields(self, result_json: dict, funding_threshold: int) -> dict:
+        recommendation = result_json.get("recommendation")
+        if recommendation not in ("FUND", "REVISE", "REJECT"):
+            recommendation = "REJECT"
+
+        def clamp_score(val, default=0):
+            if val is None:
+                return default
+            try:
+                v = int(val)
+                return max(0, min(100, v))
+            except (TypeError, ValueError):
+                return default
+
+        base_score = clamp_score(result_json.get("base_score"), 0)
+        pulse_bonus = clamp_score(result_json.get("pulse_bonus"), 0)
+        total_score = clamp_score(result_json.get("total_score"), 0)
+
+        if recommendation == "FUND" and total_score < funding_threshold:
+            recommendation = "REJECT"
+        if recommendation == "REJECT" and total_score >= funding_threshold:
+            recommendation = "REJECT"
+        if recommendation == "REVISE" and total_score >= funding_threshold:
+            recommendation = "FUND"
+
+        raw_principles = result_json.get("principle_scores")
+        if not isinstance(raw_principles, dict):
+            raw_principles = {}
+
+        principle_scores = {
+            "purpose_alignment":  clamp_score(raw_principles.get("purpose_alignment")),
+            "community_benefit":  clamp_score(raw_principles.get("community_benefit")),
+            "constitutional_fit": clamp_score(raw_principles.get("constitutional_fit")),
+            "feasibility":        clamp_score(raw_principles.get("feasibility")),
+            "value_for_money":    clamp_score(raw_principles.get("value_for_money")),
+        }
+
+        reasoning = result_json.get("reasoning") or ""
+        if not isinstance(reasoning, str):
+            reasoning = str(reasoning)
+
+        concerns = result_json.get("concerns") or ""
+        if not isinstance(concerns, str):
+            concerns = str(concerns)
+
+        return {
+            "base_score":       base_score,
+            "pulse_bonus":      pulse_bonus,
+            "total_score":      total_score,
+            "principle_scores": principle_scores,
+            "recommendation":   recommendation,
+            "reasoning":        reasoning,
+            "concerns":         concerns,
+        }
+
+    def _reserve_funds(self, community: dict, proposal: dict) -> dict:
+        """
+        Deduct the FULL proposal amount from pot_balance on approval.
+        Caller MUST have already re-read `community` fresh (see FIX 2b)
+        immediately before calling this, so the deduction is against
+        current state, not a stale pre-AI-call snapshot.
+        """
+        upfront_pct = community["upfront_release_pct"]
+        upfront_amount = (proposal["amount"] * upfront_pct) // 100
+        escrowed_amount = proposal["amount"] - upfront_amount
+
+        community["pot_balance"] = community["pot_balance"] - proposal["amount"]
+        if community["pot_balance"] < 0:
+            community["pot_balance"] = 0
+        if community["pot_balance"] == 0:
+            community["status"] = "depleted"
+
+        proposal["upfront_amount"] = upfront_amount
+        proposal["upfront_paid"] = upfront_amount
+        proposal["escrowed_amount"] = escrowed_amount
+
+        return community
 
     # ----------------------------------------------------------------
     # Public write methods
@@ -122,15 +186,21 @@ class CommunityPulse(gl.Contract):
         if pot <= 0:
             raise gl.vm.UserError("A community must be founded with a nonzero starting pot")
 
-        community_id = self._make_community_id()
-
         threshold = int(funding_threshold)
         max_pct = int(max_proposal_pct)
         fee = int(proposal_fee)
         upfront_pct = int(upfront_release_pct)
 
+        if threshold < 1 or threshold > 100:
+            raise gl.vm.UserError("funding_threshold must be between 1 and 100")
+        if max_pct < 1 or max_pct > 100:
+            raise gl.vm.UserError("max_proposal_pct must be between 1 and 100")
         if upfront_pct < 0 or upfront_pct > 100:
             raise gl.vm.UserError("upfront_release_pct must be between 0 and 100")
+        if fee < 0:
+            raise gl.vm.UserError("proposal_fee must be >= 0")
+
+        community_id = self._make_community_id()
 
         community = {
             "id": community_id,
@@ -166,11 +236,7 @@ class CommunityPulse(gl.Contract):
         return community_id
 
     @gl.public.write
-    def join_community(
-        self,
-        community_id: str,
-        member_name: str
-    ) -> None:
+    def join_community(self, community_id: str, member_name: str) -> None:
         member_address = self._sender()
         community = self._read_community(community_id)
 
@@ -183,15 +249,11 @@ class CommunityPulse(gl.Contract):
 
         members.append(member_address)
         self._set_community_members(community_id, members)
-
         community["member_count"] = community["member_count"] + 1
         self._write_community(community_id, community)
 
     @gl.public.write.payable
-    def deposit_funds(
-        self,
-        community_id: str
-    ) -> None:
+    def deposit_funds(self, community_id: str) -> None:
         amt = gl.message.value
         if amt <= 0:
             raise gl.vm.UserError("Deposit must be greater than zero")
@@ -223,14 +285,14 @@ class CommunityPulse(gl.Contract):
         fee = community["proposal_fee"]
         if gl.message.value < fee:
             raise gl.vm.UserError(
-                f"This community requires a proposal fee of {fee} — sent value was too low"
+                f"This community requires a proposal fee of {fee}"
             )
 
         amt = int(amount)
         max_allowed = (community["pot_balance"] * community["max_proposal_pct"]) // 100
         if amt <= 0 or amt > max_allowed:
             raise gl.vm.UserError(
-                f"Amount requested must be between 1 and {max_allowed} (max_proposal_pct of the current pot)"
+                f"Amount must be between 1 and {max_allowed}"
             )
 
         proposal_id = self._make_proposal_id()
@@ -294,19 +356,14 @@ class CommunityPulse(gl.Contract):
         return proposal_id
 
     @gl.public.write
-    def add_pulse(
-        self,
-        proposal_id: str
-    ) -> None:
+    def add_pulse(self, proposal_id: str) -> None:
         member_address = self._sender()
         proposal = self._read_proposal(proposal_id)
 
-        if proposal["status"] not in ("pending", "scoring", "scored"):
+        if proposal["status"] not in ("pending", "scoring"):
             return
 
-        community_id = proposal["community_id"]
-
-        if not self._is_member(community_id, member_address):
+        if not self._is_member(proposal["community_id"], member_address):
             return
 
         pulses = self._get_proposal_pulses(proposal_id)
@@ -315,7 +372,6 @@ class CommunityPulse(gl.Contract):
 
         pulses.append(member_address)
         self._set_proposal_pulses(proposal_id, pulses)
-
         proposal["pulse_count"] = proposal["pulse_count"] + 1
         self._write_proposal(proposal_id, proposal)
 
@@ -336,6 +392,8 @@ class CommunityPulse(gl.Contract):
         pot_balance = community["pot_balance"]
         member_count = community["member_count"]
         funding_threshold = community["funding_threshold"]
+        pulse_count = proposal["pulse_count"]
+        proposal_amount = proposal["amount"]
 
         prompt = (
             "You are evaluating a funding proposal for a community treasury.\n\n"
@@ -347,13 +405,13 @@ class CommunityPulse(gl.Contract):
             "Success looks like: " + constitution["success_looks_like"] + "\n\n"
             "PROPOSAL:\n"
             "Title: " + proposal["title"] + "\n"
-            "Amount requested: " + str(proposal["amount"]) +
+            "Amount requested: " + str(proposal_amount) +
             " (total pot: " + str(pot_balance) + ")\n"
             "What it does: " + proposal["what_it_does"] + "\n"
             "Who it helps: " + proposal["who_it_helps"] + "\n"
             "Success metric: " + proposal["success_metric"] + "\n"
             "Timeline: " + proposal["timeline"] + "\n"
-            "Community pulse signals: " + str(proposal["pulse_count"]) +
+            "Community pulse signals: " + str(pulse_count) +
             " members expressed support out of " + str(member_count) + " total members\n\n"
             "Score this proposal 0-100 on each of these five principles:\n"
             "- purpose_alignment: does it match the stated community purpose?\n"
@@ -361,99 +419,165 @@ class CommunityPulse(gl.Contract):
             "- constitutional_fit: does it respect the always/never fund rules?\n"
             "- feasibility: is the timeline and success metric realistic?\n"
             "- value_for_money: is the amount reasonable for the stated outcome?\n\n"
-            "Base score = average of the five principle scores.\n"
-            "Pulse bonus = up to 5 points based on pulse_count relative to member count.\n"
-            "Total score = base score + pulse bonus. Maximum 100.\n\n"
-            "Recommendation rules:\n"
+            "base_score = average of the five principle scores (integer 0-100).\n"
+            "pulse_bonus = integer 0-5 based on pulse_count relative to member_count.\n"
+            "total_score = base_score + pulse_bonus. Maximum 100. Must be an integer.\n\n"
+            "Recommendation rules (must follow exactly):\n"
             "- FUND if total_score >= " + str(funding_threshold) + "\n"
             "- REVISE if total_score is 50 to " + str(funding_threshold - 1) + "\n"
             "- REJECT if total_score < 50\n\n"
-            "Return ONLY a JSON object starting with { and ending with }. "
-            "No markdown, no preamble.\n"
+            "IMPORTANT: All score fields must be integers between 0 and 100. "
+            "recommendation must be exactly one of: FUND, REVISE, REJECT.\n\n"
+            "Return ONLY a JSON object. No markdown, no preamble, no explanation.\n"
             'Format: {"base_score": 72, "pulse_bonus": 3, "total_score": 75, '
             '"principle_scores": {"purpose_alignment": 80, "community_benefit": 75, '
             '"constitutional_fit": 90, "feasibility": 60, "value_for_money": 70}, '
-            '"recommendation": "FUND", "reasoning": "one sentence explaining verdict", '
-            '"concerns": "one sentence on what is weak or missing"}'
+            '"recommendation": "FUND", "reasoning": "one sentence", '
+            '"concerns": "one sentence"}'
         )
 
         def generate():
-            return gl.nondet.exec_prompt(prompt)
+            raw = gl.nondet.exec_prompt(prompt)
+
+            result = {}
+            try:
+                start = raw.find("{")
+                end = raw.rfind("}") + 1
+                if start >= 0 and end > start:
+                    result = json.loads(raw[start:end])
+            except Exception:
+                result = {}
+
+            recommendation = result.get("recommendation")
+            if recommendation not in ("FUND", "REVISE", "REJECT"):
+                recommendation = "REJECT"
+
+            def clamp(val, default=0):
+                if val is None:
+                    return default
+                try:
+                    v = int(val)
+                    return max(0, min(100, v))
+                except (TypeError, ValueError):
+                    return default
+
+            total_score = clamp(result.get("total_score"), 0)
+            base_score = clamp(result.get("base_score"), 0)
+            pulse_bonus = clamp(result.get("pulse_bonus"), 0)
+
+            if recommendation == "FUND" and total_score < funding_threshold:
+                recommendation = "REJECT"
+            if recommendation == "REJECT" and total_score >= funding_threshold:
+                recommendation = "REJECT"
+            if recommendation == "REVISE" and total_score >= funding_threshold:
+                recommendation = "FUND"
+
+            raw_principles = result.get("principle_scores")
+            if not isinstance(raw_principles, dict):
+                raw_principles = {}
+
+            principle_scores = {
+                "purpose_alignment":  clamp(raw_principles.get("purpose_alignment")),
+                "community_benefit":  clamp(raw_principles.get("community_benefit")),
+                "constitutional_fit": clamp(raw_principles.get("constitutional_fit")),
+                "feasibility":        clamp(raw_principles.get("feasibility")),
+                "value_for_money":    clamp(raw_principles.get("value_for_money")),
+            }
+
+            reasoning = result.get("reasoning") or ""
+            if not isinstance(reasoning, str):
+                reasoning = str(reasoning)
+            concerns = result.get("concerns") or ""
+            if not isinstance(concerns, str):
+                concerns = str(concerns)
+
+            return json.dumps({
+                "base_score":       base_score,
+                "pulse_bonus":      pulse_bonus,
+                "total_score":      total_score,
+                "principle_scores": principle_scores,
+                "recommendation":   recommendation,
+                "reasoning":        reasoning,
+                "concerns":         concerns,
+            })
 
         result_raw = gl.eq_principle.prompt_non_comparative(
             generate,
-            task="evaluate a community treasury funding proposal against a constitution",
-            criteria="valid JSON with base_score, pulse_bonus, total_score, principle_scores, recommendation, reasoning, and concerns"
+            task="evaluate a community treasury proposal and return a validated funding verdict",
+            criteria="JSON with integer scores 0-100, recommendation in (FUND/REVISE/REJECT), score consistent with recommendation"
         )
 
-        result_json = {}
+        verdict = {}
         try:
-            start = result_raw.find("{")
-            end = result_raw.rfind("}") + 1
+            cleaned = result_raw.replace("```json","").replace("```","").strip()
+            start = cleaned.find("{")
+            end = cleaned.rfind("}") + 1
             if start >= 0 and end > start:
-                result_json = json.loads(result_raw[start:end])
+                verdict = json.loads(cleaned[start:end])
         except Exception:
-            result_json = {}
+            verdict = {}
 
-        total_score = result_json.get("total_score", 0)
-        if total_score is None:
-            total_score = 0
-        base_score = result_json.get("base_score", 0)
-        if base_score is None:
-            base_score = 0
-        pulse_bonus = result_json.get("pulse_bonus", 0)
-        if pulse_bonus is None:
-            pulse_bonus = 0
-        principle_scores = result_json.get("principle_scores", {})
-        if principle_scores is None:
-            principle_scores = {}
-        recommendation = result_json.get("recommendation", "REJECT")
-        if recommendation is None:
-            recommendation = "REJECT"
-        reasoning = result_json.get("reasoning", "")
-        if reasoning is None:
-            reasoning = ""
-        concerns = result_json.get("concerns", "")
-        if concerns is None:
-            concerns = ""
+        if "total_score" not in verdict and "score" in verdict:
+            verdict["total_score"] = verdict["score"]
+            verdict["base_score"]  = verdict["score"]
+            verdict["pulse_bonus"] = 0
+        if "recommendation" not in verdict:
+            verdict["recommendation"] = "REJECT"
 
+        validated = self._validate_score_fields(verdict, funding_threshold)
+
+        # ------------------------------------------------------------
+        # FIX 2b (race guard): re-read proposal + community FRESH here,
+        # immediately before committing the funding decision. Do NOT
+        # reuse the `proposal`/`community` snapshots taken before the
+        # multi-minute AI call above — another transaction (a different
+        # proposal's evaluate_proposal / retry_payout / submit_proposal)
+        # may have committed against pot_balance in the interim. Acting
+        # on a stale snapshot here is exactly the double-spend / lost-
+        # update risk the reviewer flagged for concurrent approvals.
+        # ------------------------------------------------------------
         proposal = self._read_proposal(proposal_id)
         community = self._read_community(community_id)
 
-        proposal["base_score"] = base_score
-        proposal["pulse_bonus"] = pulse_bonus
-        proposal["total_score"] = total_score
-        proposal["principle_scores"] = principle_scores
-        proposal["recommendation"] = recommendation
-        proposal["reasoning"] = reasoning
-        proposal["concerns"] = concerns
+        if proposal["status"] != "scoring":
+            # Someone else already resolved this proposal_id concurrently
+            # (shouldn't normally happen given the "scoring" status guard
+            # at the top of this function, but fail safe rather than
+            # clobber whatever state now exists).
+            return
 
-        funding_threshold = community["funding_threshold"]
+        proposal["base_score"]       = validated["base_score"]
+        proposal["pulse_bonus"]      = validated["pulse_bonus"]
+        proposal["total_score"]      = validated["total_score"]
+        proposal["principle_scores"] = validated["principle_scores"]
+        proposal["recommendation"]   = validated["recommendation"]
+        proposal["reasoning"]        = validated["reasoning"]
+        proposal["concerns"]         = validated["concerns"]
 
-        if total_score >= funding_threshold:
-            upfront_pct = community["upfront_release_pct"]
-            upfront_amount = (proposal["amount"] * upfront_pct) // 100
-            escrowed_amount = proposal["amount"] - upfront_amount
+        total_score    = validated["total_score"]
+        recommendation = validated["recommendation"]
 
-            if community["pot_balance"] >= upfront_amount:
-                if upfront_amount > 0:
-                    self._pay(proposal["proposer"], upfront_amount)
-                community["pot_balance"] = community["pot_balance"] - upfront_amount
-                community["funded_count"] = community["funded_count"] + 1
-                community["total_funded"] = community["total_funded"] + upfront_amount
-                if community["pot_balance"] <= 0:
-                    community["status"] = "depleted"
+        if recommendation == "FUND":
+            if community["pot_balance"] >= proposal["amount"]:
+                community = self._reserve_funds(community, proposal)
 
-                proposal["status"] = "funded_partial" if escrowed_amount > 0 else "completed"
-                proposal["upfront_amount"] = upfront_amount
-                proposal["upfront_paid"] = upfront_amount
-                proposal["escrowed_amount"] = escrowed_amount
-                if escrowed_amount == 0:
+                if proposal["upfront_amount"] > 0:
+                    self._pay(proposal["proposer"], proposal["upfront_amount"])
+
+                community["funded_count"]  = community["funded_count"] + 1
+                community["total_funded"]  = community["total_funded"] + proposal["upfront_amount"]
+
+                proposal["status"] = (
+                    "funded_partial" if proposal["escrowed_amount"] > 0 else "completed"
+                )
+                if proposal["status"] == "completed":
                     community["completed_count"] = community["completed_count"] + 1
             else:
+                upfront_pct = community["upfront_release_pct"]
+                proposal["upfront_amount"]  = (proposal["amount"] * upfront_pct) // 100
+                proposal["escrowed_amount"] = proposal["amount"] - proposal["upfront_amount"]
                 proposal["status"] = "approved_unfunded"
-                proposal["upfront_amount"] = upfront_amount
-                proposal["escrowed_amount"] = escrowed_amount
+
         elif total_score >= 50:
             proposal["status"] = "revision"
         else:
@@ -471,21 +595,20 @@ class CommunityPulse(gl.Contract):
         community_id = proposal["community_id"]
         community = self._read_community(community_id)
 
-        upfront_amount = proposal["upfront_amount"]
-        if community["pot_balance"] < upfront_amount:
+        if community["pot_balance"] < proposal["amount"]:
             return
 
-        if upfront_amount > 0:
-            self._pay(proposal["proposer"], upfront_amount)
-        community["pot_balance"] = community["pot_balance"] - upfront_amount
+        community = self._reserve_funds(community, proposal)
+
+        if proposal["upfront_amount"] > 0:
+            self._pay(proposal["proposer"], proposal["upfront_amount"])
+
         community["funded_count"] = community["funded_count"] + 1
-        community["total_funded"] = community["total_funded"] + upfront_amount
-        if community["pot_balance"] <= 0:
-            community["status"] = "depleted"
+        community["total_funded"] = community["total_funded"] + proposal["upfront_amount"]
 
         proposal["status"] = "funded_partial" if proposal["escrowed_amount"] > 0 else "completed"
-        proposal["upfront_paid"] = upfront_amount
-        if proposal["escrowed_amount"] == 0:
+        proposal["upfront_paid"] = proposal["upfront_amount"]
+        if proposal["status"] == "completed":
             community["completed_count"] = community["completed_count"] + 1
 
         self._write_proposal(proposal_id, proposal)
@@ -499,31 +622,6 @@ class CommunityPulse(gl.Contract):
         evidence_url: str,
         evidence_description: str
     ) -> None:
-        """
-        evidence_type must be one of four confirmed-working categories
-        (validated via real on-chain fetch tests against studionet validators):
-
-          github_repo  — https://api.github.com/repos/{owner}/{repo}
-                         Fetches structured JSON. AI checks repo name/description
-                         matches the claimed deliverable.
-
-          github_file  — https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file}
-                         Fetches raw file bytes. AI checks file content matches
-                         the claimed deliverable.
-
-          live_site    — Any server-rendered URL (plain HTML, no JS required).
-                         Works for: custom domains, Hacker News-style apps, etc.
-                         Does NOT work for: React/Next.js SPAs, GitHub HTML pages,
-                         dev.to, Hashnode — all confirmed to return empty shells.
-
-          ipfs         — https://ipfs.io/ipfs/{CID}[/path]
-                         Immutable content, cannot be taken down after payout.
-                         Only ipfs.io gateway confirmed working; cloudflare-ipfs
-                         is blocked from studionet validators.
-
-        Any other evidence_type raises an error — open-ended URL verification
-        is explicitly excluded after testing showed it produces unreliable results.
-        """
         caller = self._sender()
         proposal = self._read_proposal(proposal_id)
 
@@ -542,52 +640,38 @@ class CommunityPulse(gl.Contract):
         if not evidence_url.strip():
             raise gl.vm.UserError("A URL is required as evidence of completion")
 
-        # URL prefix validation — catch obviously wrong URLs early before
-        # spending a validator consensus round on a guaranteed fetch failure.
         url = evidence_url.strip()
         if evidence_type == "github_repo" and not url.startswith("https://api.github.com/repos/"):
-            raise gl.vm.UserError(
-                "github_repo evidence must use the GitHub REST API: https://api.github.com/repos/{owner}/{repo}"
-            )
+            raise gl.vm.UserError("github_repo evidence must use the GitHub REST API")
         if evidence_type == "github_file" and not url.startswith("https://raw.githubusercontent.com/"):
-            raise gl.vm.UserError(
-                "github_file evidence must use raw.githubusercontent.com: https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file}"
-            )
+            raise gl.vm.UserError("github_file evidence must use raw.githubusercontent.com")
         if evidence_type == "ipfs" and not url.startswith("https://ipfs.io/ipfs/"):
-            raise gl.vm.UserError(
-                "ipfs evidence must use the ipfs.io gateway: https://ipfs.io/ipfs/{CID}"
-            )
+            raise gl.vm.UserError("ipfs evidence must use the ipfs.io gateway")
 
-        community_id = proposal["community_id"]
-        what_it_does = proposal["what_it_does"]
-        success_metric = proposal["success_metric"]
+        community_id    = proposal["community_id"]
+        what_it_does    = proposal["what_it_does"]
+        success_metric  = proposal["success_metric"]
 
-        # Build a category-specific context hint for the AI verifier so it
-        # knows what kind of content to expect and what counts as real evidence.
         if evidence_type == "github_repo":
             content_hint = (
-                "The fetched content is JSON from the GitHub REST API describing a repository. "
-                "Check whether the repository name, description, and topics match what was promised. "
-                "A repo with zero commits, no description, or a name unrelated to the deliverable is not sufficient evidence."
+                "The fetched content is JSON from the GitHub REST API. "
+                "Check repo name, description, and topics match the deliverable. "
+                "A repo with zero commits or no description is not sufficient."
             )
         elif evidence_type == "github_file":
             content_hint = (
-                "The fetched content is the raw bytes of a file from a GitHub repository. "
-                "Check whether the file content matches what was described as the deliverable — "
-                "not just that a file exists, but that its content is substantively related to what was promised."
+                "The fetched content is a raw file from GitHub. "
+                "Check whether the file content matches what was promised."
             )
         elif evidence_type == "live_site":
             content_hint = (
-                "The fetched content is the raw HTML of a live website. "
-                "Check whether the page content matches what was promised — "
-                "not just that a page loads, but that it contains real, relevant content related to the deliverable. "
-                "A placeholder page, login wall, or 404 rendered as HTML is not sufficient."
+                "The fetched content is raw HTML of a live website. "
+                "A placeholder page, login wall, or 404 as HTML is not sufficient."
             )
         else:
             content_hint = (
-                "The fetched content is a file retrieved from IPFS — an immutable, content-addressed store. "
-                "Check whether the content matches what was promised as the deliverable. "
-                "IPFS content cannot be altered after pinning, so if the content matches, it is genuine evidence."
+                "The fetched content is a file from IPFS — immutable, cannot be altered. "
+                "If content matches the deliverable, it is genuine evidence."
             )
 
         def generate():
@@ -596,10 +680,6 @@ class CommunityPulse(gl.Contract):
                 response = gl.nondet.web.request(url, method="GET")
                 page_text = response.body.decode("utf-8", errors="ignore")[:4000]
             except Exception as e:
-                # Validator-safe pattern: catch bare Exception, inspect e.args[0]
-                # as a plain dict via builtins only. Never import GenLayer internal
-                # exception classes — different validators can have different
-                # availability, causing real cross-validator consensus splits.
                 ctx = e.args[0] if e.args else {}
                 if isinstance(ctx, dict):
                     body = ctx.get("body")
@@ -610,93 +690,118 @@ class CommunityPulse(gl.Contract):
                 return json.dumps({
                     "delivered": False,
                     "fetch_failed": True,
-                    "reasoning": "The evidence URL could not be reached — nothing to verify against. This may be a temporary network issue, not necessarily a sign the work was not done."
+                    "reasoning": "The evidence URL could not be reached — nothing to verify."
                 })
 
-            verify_prompt = f"""You are verifying whether a funded community proposal was actually delivered.
-
-WHAT WAS PROMISED:
-What it does: {what_it_does}
-Success metric: {success_metric}
-
-PROPOSER'S CLAIM ABOUT WHAT THEY BUILT:
-{evidence_description[:800]}
-
-EVIDENCE TYPE: {evidence_type}
-{content_hint}
-
-LIVE CONTENT FETCHED FROM THE EVIDENCE URL:
-{page_text}
-END OF FETCHED CONTENT.
-
-Judge honestly whether the fetched content is real, substantive evidence that what was promised
-actually exists and roughly matches the claim. Do not require perfection; require genuine,
-verifiable existence of the core deliverable. A 404, empty shell, placeholder, or content
-entirely unrelated to the claim is not sufficient.
-
-Return ONLY this JSON, nothing else:
-{{"delivered": <true or false>, "fetch_failed": false, "reasoning": "<one sentence citing something specific you found or did not find in the fetched content>"}}"""
+            verify_prompt = (
+                "You are verifying whether a funded community proposal was delivered.\n\n"
+                "WHAT WAS PROMISED:\n"
+                "What it does: " + what_it_does + "\n"
+                "Success metric: " + success_metric + "\n\n"
+                "PROPOSER CLAIM:\n" + evidence_description[:800] + "\n\n"
+                "EVIDENCE TYPE: " + evidence_type + "\n"
+                + content_hint + "\n\n"
+                "FETCHED CONTENT:\n" + page_text + "\nEND OF CONTENT.\n\n"
+                "Judge honestly whether the fetched content is real, substantive evidence "
+                "that the deliverable exists. A 404, placeholder, empty repo, or unrelated "
+                "content is not sufficient.\n\n"
+                "Return ONLY this JSON:\n"
+                '{"delivered": <true or false>, "fetch_failed": false, '
+                '"reasoning": "<one sentence citing something specific>"}'
+            )
 
             result = gl.nondet.exec_prompt(verify_prompt)
-            return result.replace("```json", "").replace("```", "")
+            cleaned = result.replace("```json", "").replace("```", "").strip()
+
+            verdict = {}
+            try:
+                start = cleaned.find("{")
+                end = cleaned.rfind("}") + 1
+                if start >= 0 and end > start:
+                    verdict = json.loads(cleaned[start:end])
+            except Exception:
+                verdict = {}
+
+            delivered = verdict.get("delivered")
+            if not isinstance(delivered, bool):
+                delivered = False
+            fetch_failed = verdict.get("fetch_failed")
+            if not isinstance(fetch_failed, bool):
+                fetch_failed = False
+            reasoning = verdict.get("reasoning") or "No reasoning returned."
+            if not isinstance(reasoning, str):
+                reasoning = str(reasoning)
+
+            return json.dumps({
+                "delivered":   delivered,
+                "fetch_failed": fetch_failed,
+                "reasoning":   reasoning,
+            })
 
         result_raw = gl.eq_principle.prompt_non_comparative(
             generate,
             task="verify whether fetched live content substantiates a claimed proposal deliverable",
-            criteria="a JSON object with delivered (bool) and reasoning (string) fields",
+            criteria="JSON with delivered (bool), fetch_failed (bool), and reasoning (string)"
         )
 
-        result_json = {}
+        verdict = {}
         try:
             start = result_raw.find("{")
             end = result_raw.rfind("}") + 1
             if start >= 0 and end > start:
-                result_json = json.loads(result_raw[start:end])
+                verdict = json.loads(result_raw[start:end])
         except Exception:
-            result_json = {}
+            verdict = {}
 
-        delivered = result_json.get("delivered", False)
-        if delivered is None:
+        delivered    = verdict.get("delivered", False)
+        fetch_failed = verdict.get("fetch_failed", False)
+        reasoning    = verdict.get("reasoning") or "No verification reasoning returned."
+
+        if not isinstance(delivered, bool):
             delivered = False
-        fetch_failed = result_json.get("fetch_failed", False)
-        if fetch_failed is None:
+        if not isinstance(fetch_failed, bool):
             fetch_failed = False
-        verify_reasoning = result_json.get("reasoning")
-        if not verify_reasoning:
-            verify_reasoning = "No verification reasoning was returned."
+        if not isinstance(reasoning, str):
+            reasoning = str(reasoning)
 
+        # FIX 2b (race guard): fresh read right before commit — see
+        # evaluate_proposal above for the rationale.
         proposal = self._read_proposal(proposal_id)
         community = self._read_community(community_id)
 
-        proposal["completion_evidence_type"] = evidence_type
-        proposal["completion_evidence_url"] = evidence_url
+        if proposal["status"] != "funded_partial":
+            # State moved concurrently (e.g. proposer somehow resubmitted
+            # evidence twice in flight). Don't clobber — bail out.
+            return
+
+        proposal["completion_evidence_type"]        = evidence_type
+        proposal["completion_evidence_url"]         = evidence_url
         proposal["completion_evidence_description"] = evidence_description
-        proposal["completion_delivered"] = delivered
-        proposal["completion_reasoning"] = verify_reasoning
+        proposal["completion_delivered"]            = delivered
+        proposal["completion_reasoning"]            = reasoning
 
         if delivered:
             escrowed = proposal["escrowed_amount"]
             if escrowed > 0:
                 self._pay(proposal["proposer"], escrowed)
                 community["total_funded"] = community["total_funded"] + escrowed
-            proposal["status"] = "completed"
+            proposal["status"]          = "completed"
             proposal["escrowed_amount"] = 0
             community["completed_count"] = community["completed_count"] + 1
             self._write_community(community_id, community)
+
         elif fetch_failed:
-            # Technical failure to reach URL: don't burn the resubmission count.
-            # Known accepted limitation: a URL that keeps failing indefinitely
-            # can retry forever — flagged and accepted, not solved.
             proposal["status"] = "funded_partial"
+
         else:
             if proposal["completion_resubmission_count"] == 0:
                 proposal["completion_resubmission_count"] = 1
                 proposal["status"] = "funded_partial"
             else:
                 escrowed = proposal["escrowed_amount"]
-                community["pot_balance"] = community["pot_balance"] + escrowed
+                community["pot_balance"]    = community["pot_balance"] + escrowed
                 proposal["escrowed_amount"] = 0
-                proposal["status"] = "completion_failed"
+                proposal["status"]          = "completion_failed"
                 self._write_community(community_id, community)
 
         self._write_proposal(proposal_id, proposal)
@@ -717,20 +822,18 @@ Return ONLY this JSON, nothing else:
 
         if original["proposer"] != proposer_address:
             raise gl.vm.UserError("Only the original proposer can revise this proposal")
-
         if original["status"] != "revision":
             raise gl.vm.UserError("This proposal is not open for revision")
-
         if original["revision_count"] != 0:
             raise gl.vm.UserError("This proposal has already used its one revision")
 
         community_id = original["community_id"]
-        community = self._read_community(community_id)
+        community    = self._read_community(community_id)
 
         amt = int(amount)
         max_allowed = (community["pot_balance"] * community["max_proposal_pct"]) // 100
         if amt <= 0 or amt > max_allowed:
-            raise gl.vm.UserError(f"Amount requested must be between 1 and {max_allowed}")
+            raise gl.vm.UserError(f"Amount must be between 1 and {max_allowed}")
 
         original["revision_count"] = 1
         self._write_proposal(original_proposal_id, original)
@@ -762,22 +865,22 @@ Return ONLY this JSON, nothing else:
                 "purpose_alignment": None,
                 "community_benefit": None,
                 "constitutional_fit": None,
-                "feasibility": None,
-                "value_for_money": None,
+                "feasibility":        None,
+                "value_for_money":    None,
             },
             "recommendation": None,
             "reasoning": None,
-            "concerns": None,
+            "concerns":  None,
             "revision_count": 0,
             "upfront_amount": 0,
-            "upfront_paid": 0,
+            "upfront_paid":   0,
             "escrowed_amount": 0,
-            "completion_evidence_type": "",
-            "completion_evidence_url": "",
+            "completion_evidence_type":        "",
+            "completion_evidence_url":         "",
             "completion_evidence_description": "",
-            "completion_delivered": None,
-            "completion_reasoning": "",
-            "completion_resubmission_count": 0,
+            "completion_delivered":            None,
+            "completion_reasoning":            "",
+            "completion_resubmission_count":   0,
             "created_at": int(self.proposal_count),
         }
 
@@ -844,8 +947,7 @@ Return ONLY this JSON, nothing else:
 
     @gl.public.view
     def get_community_members(self, community_id: str) -> str:
-        members = self._get_community_members(community_id)
-        return json.dumps(members)
+        return json.dumps(self._get_community_members(community_id))
 
     @gl.public.view
     def get_recent_communities(self, limit: int) -> str:
